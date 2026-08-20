@@ -1,1 +1,687 @@
-This is a read me
+# HCA Healthcare Price Forecast with TensorFlow
+
+## Overview
+
+This project builds an end-to-end machine-learning pipeline for HCA Healthcare (`HCA`) and compares three regression approaches:
+
+- `LinearRegression`
+- `Ridge`
+- a TensorFlow / Keras neural network
+
+The goal is to predict future **HCA returns**, convert those returns into future **price estimates**, and compare the models using out-of-sample historical performance. The notebook currently targets approximately December 31, 2026 and December 31, 2027.
+
+> This is an educational historical modeling exercise, not investment advice. Forecast ranges are based on historical model errors and are not guarantees.
+
+## Project logic
+
+The pipeline is:
+
+```text
+Yahoo Finance market data
+        +
+SEC financial filings
+        ↓
+Point-in-time daily dataset
+        ↓
+Market + technical + macro + fundamental features
+        ↓
+Future-return targets
+        ↓
+Chronological train / validation / test split
+        ↓
+StandardScaler
+        ↓
+Linear Regression | Ridge | TensorFlow
+        ↓
+Compare MAE / RMSE / R²
+        ↓
+Predict future return
+        ↓
+Convert return to future HCA price
+        ↓
+Historical forecast-error range
+```
+
+## Data sources
+
+### Yahoo Finance via `yfinance`
+
+The notebook downloads about 10 years of daily market data for:
+
+| Symbol | Meaning |
+|---|---|
+| `HCA` | HCA Healthcare |
+| `XLV` | Health Care Select Sector SPDR Fund |
+| `^VIX` | CBOE Volatility Index |
+| `^IRX` | 13-week Treasury yield |
+| `^TNX` | 10-year Treasury yield |
+
+For HCA, the model uses Open, High, Low, Close, Adjusted Close, and Volume.
+
+The raw `market` DataFrame keeps the two-level `yfinance` MultiIndex so the model can distinguish fields such as `Close/HCA` from `Close/XLV`. A separate single-level DataFrame named `df` is used for modeling.
+
+### SEC Company Facts API
+
+The notebook pulls HCA Healthcare fundamentals from the SEC Company Facts API using:
+
+```text
+CIK 0000860730
+```
+
+The SEC source is used for variables such as:
+
+- Total Assets
+- Total Liabilities
+- Cash
+- Stockholders' Equity
+- Revenue
+- Net Income
+- Operating Cash Flow
+- Capital Expenditures
+- Debt
+
+The notebook focuses on 10-Q and 10-K facts.
+
+## Point-in-time SEC logic
+
+A key design choice is that SEC fundamentals are merged using the **filing date**, not the quarter-end date.
+
+Example:
+
+```text
+Quarter ended: March 31
+10-Q filed:    May 1
+```
+
+The model should not know the March-quarter numbers during April. They only become available after the May 1 filing.
+
+The notebook therefore uses a backward `merge_asof()`:
+
+```text
+daily market date
+      ↓
+most recent SEC filing available on or before that date
+```
+
+This helps reduce look-ahead bias.
+
+## Feature construction
+
+### HCA market features
+
+- `HCA_Adj_Close`
+- `HCA_Volume`
+- `HCA_Return_1D`
+
+### Money-flow features
+
+- Typical Price
+- Dollar Volume
+- Money Flow Multiplier
+- Money Flow Volume
+- Directional Dollar Flow
+- `Flow_5D`
+- `Flow_20D`
+- `Flow_60D`
+
+The Money Flow Multiplier estimates where the close sits within the daily high-low range. A close near the high implies stronger buying pressure; a close near the low implies stronger selling pressure.
+
+### Technical indicators
+
+- `MA_20`
+- `MA_50`
+- `MA_200`
+- `RSI_14`
+- `MACD`
+- `MACD_Signal`
+- `Volatility_20D`
+- `Volatility_60D`
+
+These represent trend, momentum, overbought/oversold behavior, and recent risk.
+
+### Sector features
+
+- `XLV_Close`
+- `XLV_Return_1D`
+
+These help separate company-specific movement from broader healthcare-sector movement.
+
+### Market-risk features
+
+- `VIX`
+- `VIX_Change`
+
+These approximate market volatility and investor risk sentiment.
+
+### Interest-rate features
+
+- `Treasury_3M`
+- `Treasury_10Y`
+- `Treasury_3M_Change`
+- `Treasury_10Y_Change`
+- `Yield_Curve_10Y_3M`
+
+These may capture changes in borrowing costs, discount rates, and macroeconomic expectations.
+
+### HCA fundamental features
+
+- `Total_Assets`
+- `Total_Liabilities`
+- `Cash`
+- `Total_Debt`
+- `Stockholders_Equity`
+- `Revenue`
+- `Net_Income`
+- `Operating_Cash_Flow`
+- `Capital_Expenditures`
+- `Free_Cash_Flow`
+
+Free Cash Flow is constructed as:
+
+```text
+Free Cash Flow =
+Operating Cash Flow - |Capital Expenditures|
+```
+
+### Financial ratios
+
+```text
+Debt_to_Assets = Total_Debt / Total_Assets
+Cash_to_Debt   = Cash / Total_Debt
+FCF_Margin     = Free_Cash_Flow / Revenue
+```
+
+### Growth features
+
+The notebook also includes:
+
+- Revenue Growth
+- Net Income Growth
+- Asset Growth
+- Liability Growth
+- FCF Growth
+
+These attempt to capture changes in fundamentals rather than only absolute levels.
+
+## Forecast-date construction
+
+The notebook defines:
+
+```text
+2026-12-31
+2027-12-31
+```
+
+It first determines the **latest usable feature date**.
+
+That does not necessarily mean the latest market date. It means:
+
+> the most recent date where every selected model feature has a valid value at the same time.
+
+If HCA market data goes through August 2026 but one required feature is missing after May 22, the model may show:
+
+```text
+Latest usable date: 2026-05-22
+```
+
+In that case, the forecast is effectively based on information from May 22.
+
+The number of business days from the latest usable date to each target date is calculated, and the same horizon length is applied historically:
+
+```text
+Target Return at time t =
+HCA price at t+h / HCA price at t - 1
+```
+
+This converts the historical data into supervised-learning examples.
+
+A useful diagnostic for the usable-date issue is:
+
+```python
+feature_last_valid_dates = pd.Series({
+    col: df[col].last_valid_index()
+    for col in available_features
+}).sort_values()
+
+print(feature_last_valid_dates.head(15))
+```
+
+## Train / validation / test split
+
+The model uses chronological splitting rather than random splitting:
+
+```text
+Oldest                                      Newest
+------------------------------------------------->
+|       TRAIN 70%       | VAL 15% | TEST 15% |
+```
+
+This matters because random splitting could allow future market conditions to leak into training.
+
+The train set fits the model.
+
+The validation set controls TensorFlow training and early stopping.
+
+The test set is reserved for final historical evaluation.
+
+## Scaling
+
+The notebook uses `StandardScaler` because feature magnitudes vary greatly:
+
+```text
+Daily return    ~ 0.01
+RSI             ~ 50
+HCA price       ~ hundreds
+Revenue         ~ billions
+Money flow      ~ potentially billions
+```
+
+The scaler is fit only on training data:
+
+```python
+scaler.fit(X_train)
+```
+
+Validation, test, and forecast rows use:
+
+```python
+scaler.transform(...)
+```
+
+This avoids data leakage.
+
+## Models
+
+### Linear Regression
+
+This is the simplest baseline. It estimates future return as a linear combination of the features.
+
+Its purpose is to answer:
+
+> How much predictive information exists in simple linear relationships?
+
+### Ridge Regression
+
+Ridge is linear regression with coefficient regularization.
+
+It can help when features are correlated or ordinary linear regression becomes unstable.
+
+The current notebook uses:
+
+```python
+Ridge(alpha=1.0)
+```
+
+### TensorFlow Neural Network
+
+The TensorFlow model is the main showcase.
+
+Current architecture:
+
+```text
+Input
+ ↓
+Dense(64, ReLU)
+ ↓
+Dropout(20%)
+ ↓
+Dense(32, ReLU)
+ ↓
+Dense(1)
+ ↓
+Predicted future return
+```
+
+It uses:
+
+- Adam optimizer
+- MSE loss
+- MAE metric
+- early stopping
+- best validation weights restored
+
+TensorFlow can learn nonlinear interactions that Linear and Ridge cannot model directly.
+
+## Model comparison
+
+All three models should be judged on the same chronological test data.
+
+### MAE
+
+Mean Absolute Error measures the average absolute return error.
+
+Example:
+
+```text
+MAE = 0.12
+```
+
+means the prediction missed the actual future return by roughly 12 percentage points on average.
+
+Lower is better.
+
+### RMSE
+
+Root Mean Squared Error penalizes large prediction mistakes more strongly.
+
+Lower is better.
+
+If RMSE is much larger than MAE, the model probably has some unusually large misses.
+
+### R²
+
+R² measures how much variation in future returns the model explains.
+
+Simplified interpretation:
+
+```text
+R² = 1.0  very strong fit
+R² = 0.0  no better than predicting the average
+R² < 0    worse than a simple average prediction
+```
+
+For financial forecasting, strong out-of-sample R² is difficult.
+
+## Choosing the best model
+
+Do not select TensorFlow simply because it is more advanced.
+
+The best model should have stronger **out-of-sample test performance**:
+
+1. lower MAE,
+2. lower RMSE,
+3. higher R²,
+4. stable results across different historical periods.
+
+Example:
+
+```text
+Model               MAE     RMSE     R²
+------------------------------------------
+LinearRegression     18%      24%    0.05
+Ridge                16%      21%    0.14
+TensorFlow           11%      16%    0.32
+```
+
+Here TensorFlow clearly adds value.
+
+If Ridge performs better than TensorFlow, the project should report that rather than forcing the neural network to be the winner.
+
+## Final forecast calculation
+
+Each trained model receives the latest usable feature row and predicts a future return.
+
+The notebook converts that return to a price:
+
+```text
+Central Price Estimate =
+Latest HCA Price × (1 + Predicted Return)
+```
+
+Example:
+
+```text
+Latest HCA price:  $393.28
+Predicted return:  -12.8%
+
+Central estimate:
+393.28 × (1 - 0.128)
+≈ $342.79
+```
+
+The **central price estimate** is the model's single point forecast. It is not a guarantee and does not necessarily equal the midpoint of an uncertainty range.
+
+## Historical residual range
+
+For each historical test prediction:
+
+```text
+Residual =
+Actual Future Return - Predicted Future Return
+```
+
+Example:
+
+```text
+Predicted: +10%
+Actual:     -5%
+Residual:  -15%
+```
+
+Another:
+
+```text
+Predicted: +8%
+Actual:    +25%
+Residual:  +17%
+```
+
+The notebook takes approximately the 10th and 90th percentiles of those historical residuals and applies them to the current forecast.
+
+Therefore the **Historical Residual Range** is not HCA's historical high-low price range.
+
+It means:
+
+> based on how wrong the model was during unseen historical test periods, this is the range produced when those historical forecast errors are applied to the current prediction.
+
+A very wide residual range means historical model errors were large and the point forecast should be treated with lower confidence.
+
+It is an empirical error range, not a guaranteed confidence interval.
+
+## Example interpretation
+
+If the notebook reports:
+
+```text
+Latest usable date: 2026-05-22
+Latest HCA adjusted close: $393.28
+
+TensorFlow — target 2026-12-31
+Predicted return: -12.8%
+Central price estimate: $342.79
+Historical residual range: $237.74 - $502.61
+```
+
+the interpretation is:
+
+- the model is starting from the May 22 feature state;
+- TensorFlow predicts approximately a 12.8% decline over the defined horizon;
+- `$342.79` is the point estimate;
+- `$237.74-$502.61` reflects the model's historically large forecast errors;
+- the wide range means confidence in the exact point estimate should be limited.
+
+## Improvements
+
+### 1. Fix the latest usable date first
+
+This is the highest-priority improvement.
+
+If market data extends beyond the latest usable date, identify which feature causes the cutoff.
+
+Possible causes include:
+
+- missing SEC concepts,
+- quarterly growth variables,
+- missing debt components,
+- `NaN` values introduced by feature calculations.
+
+For fundamentals, forward-filling after the filing date is often appropriate because the latest filing remains the newest public information until a new filing is released.
+
+### 2. Improve fundamental growth features
+
+Daily percentage changes are not ideal for quarterly accounting data.
+
+Better features would include:
+
+- quarter-over-quarter revenue growth,
+- year-over-year revenue growth,
+- year-over-year net-income growth,
+- year-over-year FCF growth.
+
+Calculate them between actual filing observations, then forward-fill the latest known growth rate.
+
+### 3. Add walk-forward validation
+
+Instead of only one train/validation/test split, repeatedly test later historical periods:
+
+```text
+Train 2016-2020 -> test 2021
+Train 2016-2021 -> test 2022
+Train 2016-2022 -> test 2023
+...
+```
+
+This gives a more robust picture across market regimes.
+
+### 4. Add purged / embargoed splitting
+
+Forward-return targets overlap heavily.
+
+Example:
+
+```text
+Jan 1 -> next 250 days
+Jan 2 -> next 250 days
+Jan 3 -> next 250 days
+```
+
+These outcomes are not independent.
+
+A purged split removes observations near train/test boundaries so overlapping future windows do not leak information across the split.
+
+### 5. Tune Ridge
+
+Test values such as:
+
+```text
+0.001, 0.01, 0.1, 1, 10, 100
+```
+
+Choose `alpha` using validation data.
+
+### 6. Tune TensorFlow
+
+Possible experiments:
+
+- 16/32/64/128 neurons,
+- one to three hidden layers,
+- dropout rates,
+- L2 regularization,
+- learning rate,
+- batch size.
+
+Use validation data, not the test set, for model selection.
+
+### 7. Add explainability
+
+Useful tools include:
+
+- permutation importance,
+- SHAP,
+- sensitivity analysis.
+
+These can show which features contributed most to a forecast.
+
+### 8. Add naive baselines
+
+A machine-learning model should beat simple alternatives such as:
+
+- predicting the historical average return,
+- predicting zero return,
+- assuming HCA follows XLV.
+
+### 9. Improve the uncertainty range
+
+The current raw residual-percentile method can create an asymmetric range and may even place the point estimate outside the displayed range.
+
+Better alternatives include:
+
+- absolute historical error bands,
+- bootstrap intervals,
+- quantile regression,
+- Monte Carlo simulation,
+- probabilistic neural networks.
+
+### 10. Add more variables carefully
+
+Potential additions:
+
+- S&P 500 returns,
+- Federal Funds rate,
+- inflation,
+- unemployment,
+- credit spreads,
+- earnings surprises,
+- analyst estimate revisions,
+- HCA valuation multiples,
+- EBITDA,
+- EPS,
+- operating margin,
+- debt/EBITDA,
+- ROA or ROIC.
+
+Any new feature must be constructed using only information actually available at that historical date.
+
+## How the final project should be presented
+
+A strong final summary should include:
+
+```text
+Target date
+Latest usable feature date
+Latest HCA price
+
+Linear Regression:
+- forecast
+- MAE
+- RMSE
+- R²
+
+Ridge:
+- forecast
+- MAE
+- RMSE
+- R²
+
+TensorFlow:
+- predicted return
+- central price estimate
+- historical error range
+- MAE
+- RMSE
+- R²
+```
+
+Then state which model performed best historically.
+
+For example:
+
+```text
+TensorFlow produced the lowest out-of-sample MAE and RMSE,
+so it is used as the primary nonlinear forecast.
+```
+
+or:
+
+```text
+Ridge outperformed TensorFlow, suggesting that the added
+neural-network complexity did not improve generalization.
+```
+
+## Key takeaway
+
+The project is best understood as a **model-comparison and forecasting experiment**, not a guaranteed stock-price prediction system.
+
+The most important questions are:
+
+1. Do the selected historical features contain predictive information about future HCA returns?
+2. Does TensorFlow outperform simpler Linear and Ridge models?
+3. Does performance remain stable on genuinely unseen future periods?
+4. How large are historical forecast errors?
+5. Is the final forecast based on the latest truly usable point-in-time data?
+
+The central price estimate is the model's best single prediction.
+
+The historical residual range communicates how uncertain that prediction has been based on historical out-of-sample errors.
+
+A strong forecasting project should report both the prediction **and how reliable that prediction has historically been**.
