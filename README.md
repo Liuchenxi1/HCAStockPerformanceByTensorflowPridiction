@@ -1,8 +1,8 @@
-# HCA Healthcare Price Forecast
+# Stock Price Forecast
 
 ## Overview
 
-This project uses historical market data, SEC financial data, and machine learning to estimate future HCA Healthcare (`HCA`) stock returns.
+This project uses historical market data, SEC financial data, and machine learning to estimate future stock returns.
 
 The notebook compares:
 
@@ -10,7 +10,17 @@ The notebook compares:
 - Ridge Regression
 - TensorFlow Neural Network
 
-The main goal is to see whether TensorFlow can improve on simpler regression models and then convert the predicted return into an estimated future HCA stock price.
+The main goal is to see whether TensorFlow can improve on simpler regression models and then convert the predicted return into an estimated future Ticker stock price.
+
+# How to Use
+
+Enter a ticker at the top of the notebook: "Enter the stock ticker to analyze (example: AAPL, MSFT, HCA): "
+
+The default benchmark is:
+
+BENCHMARK_TICKER = "SPY"
+
+You can replace SPY with a sector ETF if you want a more specific benchmark.
 
 ---
 
@@ -18,8 +28,8 @@ The main goal is to see whether TensorFlow can improve on simpler regression mod
 
 | Element | Source | Purpose |
 |---|---|---|
-| HCA price / volume | Yahoo Finance | Main stock data |
-| XLV | Yahoo Finance | Healthcare-sector comparison |
+| Ticker price / volume | Yahoo Finance | Main stock data |
+| Benchmark | Yahoo Finance | SPY price and return |
 | VIX | Yahoo Finance | Market fear / volatility |
 | 3M Treasury | Yahoo Finance | Short-term interest-rate environment |
 | 10Y Treasury | Yahoo Finance | Long-term interest-rate environment |
@@ -28,22 +38,17 @@ The main goal is to see whether TensorFlow can improve on simpler regression mod
 | MACD | Calculated | Trend and momentum |
 | Volatility | Calculated | Recent stock risk |
 | Money Flow | Calculated | Estimated buying / selling pressure |
-
 ---
 
 ## SEC Fundamental Elements
 
-SEC data is pulled from the SEC Company Facts API using HCA Healthcare CIK:
-
-```text
-0000860730
-```
+The notebook automatically looks up the SEC CIK for the selected ticker and then downloads Company Facts data.
 
 The model uses the SEC **filing date** so financial information is not used before it was publicly available.
 
 | SEC Element | Meaning |
 |---|---|
-| Total Assets | Size of HCA's asset base |
+| Total Assets | Company asset base |
 | Total Liabilities | Total obligations |
 | Cash | Available cash |
 | Total Debt | Current and long-term debt |
@@ -80,6 +85,17 @@ The models are compared using:
 
 The best model should be chosen from the **test results**, not simply because TensorFlow is more advanced.
 
+Train / Validation / Test Split
+
+The data is split chronologically:
+
+Oldest                                         Newest
+---------------------------------------------------->
+
+|       Train 70%       | Validation 15% | Test 15% |
+
+There is no random shuffle.
+
 ---
 
 ## Forecast Logic
@@ -103,58 +119,36 @@ Current HCA Price × (1 + Predicted Return)
 ## Current TensorFlow Results
 
 ```text
-Latest usable date: 2026-05-22
-Latest HCA adjusted close: $393.28
+The final output looks like:
+
+TICKER PRICE FORECAST SUMMARY
+========================================
+
+Latest market date: YYYY-MM-DD
+Latest adjusted close: $XXX.XX
+
+TensorFlow — target YYYY-12-31
+Predicted return: XX.X%
+Central price estimate: $XXX.XX
+Historical residual range: $XXX - $XXX
 ```
 
-### End of 2026
+Central Price Estimate: The model's main point forecast.
 
-```text
-Predicted return: -12.8%
-Central price estimate: $342.79
-Historical residual range: $237.74 - $502.61
-```
+Example: The **central price estimate of $342.79** is the model's single best estimate.
 
-This means TensorFlow's main prediction is that HCA may decline about **12.8%** from the latest usable price.
+The notebook uses these historical errors to estimate a wider forecast range. This does not mean the stock's historical low and high.
 
-The **central price estimate of $342.79** is the model's single best estimate.
+It means the model historically had prediction errors large enough to create that range around the current forecast.
 
-The historical residual range shows how large the model's prediction errors were during historical test periods. It is **not** HCA's historical high-low range and is not a guaranteed future range.
-
-A wide range means the model has considerable uncertainty.
+A wider range means more uncertainty.
 
 ---
 
-### End of 2027
-
-```text
-Predicted return: +29.6%
-Central price estimate: $509.67
-Historical residual range: $297.14 - $496.37
-```
-
-This means TensorFlow predicts a stronger long-term recovery or increase, with a point estimate near **$509.67**.
-
-The wide historical error range again shows that the forecast has substantial uncertainty.
-
-The current residual-range method can sometimes place the central estimate outside the displayed range, so this part should be improved in a future version.
-
----
-
-## Important Note About the Latest Usable Date
-
-`2026-05-22` does not mean the HCA market data ends on that date.
-
-It means May 22 is the latest row where all required model features were available at the same time.
-
-If some SEC or growth features are missing after that date, newer market rows cannot currently be used for the final prediction.
-
-Improving this is one of the most important next steps.
-
----
 
 ## The Graph that indicated the 3 different models results: 
-<img width="690" height="390" alt="graph 1" src="https://github.com/user-attachments/assets/bcebe831-0033-49c1-aa6f-1037cb5953a2" />
-<img width="690" height="390" alt="graph 2" src="https://github.com/user-attachments/assets/ae7a0041-9eb4-4e09-9dfd-a5623591caba" />
+<img width="689" height="390" alt="image" src="https://github.com/user-attachments/assets/e31110b8-868e-4bb0-8e28-640b0d7b2f4d" />
+<img width="690" height="390" alt="image" src="https://github.com/user-attachments/assets/375d19d2-c686-4d48-a110-12b48993120d" />
+
 
 
