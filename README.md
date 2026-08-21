@@ -153,32 +153,8 @@ Improving this is one of the most important next steps.
 
 ---
 
-## What Can Be Improved
+## The Graph that indicated the 3 different models results: 
+<img width="690" height="390" alt="graph 1" src="https://github.com/user-attachments/assets/bcebe831-0033-49c1-aa6f-1037cb5953a2" />
+<img width="690" height="390" alt="graph 2" src="https://github.com/user-attachments/assets/ae7a0041-9eb4-4e09-9dfd-a5623591caba" />
 
-1. Move the latest usable date closer to the newest market date.
-2. Improve quarterly SEC growth calculations.
-3. Use walk-forward time-series validation.
-4. Tune Ridge `alpha`.
-5. Tune TensorFlow layers, dropout, learning rate, and batch size.
-6. Add feature importance / SHAP analysis.
-7. Improve the forecast range using a more robust uncertainty method.
 
----
-
-## Final Interpretation
-
-The main result should not be read as:
-
-```text
-HCA will definitely be $342.79 or $509.67.
-```
-
-A better interpretation is:
-
-> Based on the historical market, technical, macroeconomic, and SEC fundamental features, TensorFlow produced a central estimate for HCA's future price. Historical test errors show that the uncertainty around those estimates is still large.
-
-The most important question is whether TensorFlow produces lower test MAE/RMSE and higher R² than Linear Regression and Ridge.
-
-If TensorFlow performs better, the project demonstrates that nonlinear relationships add predictive value.
-
-If Ridge or Linear Regression performs better, the simpler model should be considered more reliable.
